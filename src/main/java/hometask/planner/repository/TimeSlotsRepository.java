@@ -56,7 +56,7 @@ public class TimeSlotsRepository {
     }
 
     public Set<TimeSlot> addTimeSlots(UUID personId, LocalDateTime start, LocalDateTime end){
-        var newTimeSlots = makeBreaksInPeriod(personId, start,end);
+        var newTimeSlots = makeBricksInPeriod(personId, start,end);
         return personTimeSlots.compute(personId, (key, slots) -> {
             if (slots == null) slots = new HashSet<>();
             slots.addAll(newTimeSlots); // no need to removeAll first, it's a Set
@@ -65,14 +65,14 @@ public class TimeSlotsRepository {
     }
 
     public Set<TimeSlot> removeTimeSlots(UUID personId, LocalDateTime start, LocalDateTime end){
-        var timeSlotsToRemove = makeBreaksInPeriod(personId, start,end);
+        var timeSlotsToRemove = makeBricksInPeriod(personId, start,end);
         return  personTimeSlots.computeIfPresent(personId , (key, slots) -> {
             slots.removeAll(timeSlotsToRemove);
             return slots.isEmpty() ? null : slots;
         });
     }
 
-    Set<TimeSlot> makeBreaksInPeriod(UUID personId, LocalDateTime start, LocalDateTime end){
+    Set<TimeSlot> makeBricksInPeriod(UUID personId, LocalDateTime start, LocalDateTime end){
         // I need to do breaks from minute Zero to have compatible blocks
         var startOfHour = start.withMinute(0);
         long cycles = ChronoUnit.MINUTES.between(startOfHour,end)/timeSlotDuration;
@@ -82,6 +82,16 @@ public class TimeSlotsRepository {
                 .filter( time -> !time.isBefore(start))
                 .map( el -> new TimeSlot(el, SlotType.AVAILABLE, personId, null))
                 .collect(Collectors.toSet());
+    }
+
+    public long calculateBricksInPeriod(LocalDateTime start, LocalDateTime end){
+        var startOfHour = start.withMinute(0);
+        long cycles =  ChronoUnit.MINUTES.between(startOfHour,end)/timeSlotDuration;
+        return Stream.iterate(startOfHour, (el) -> el.plusMinutes(timeSlotDuration))
+                .limit(cycles)
+                //and now filter out all bricks before start date
+                .filter( time -> !time.isBefore(start))
+                .count();
     }
 
     public void cleanOldTimeSlots(UUID personId){

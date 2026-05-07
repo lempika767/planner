@@ -17,7 +17,7 @@ public class TimeSlotsRepositoryTest {
         var personId = UUID.randomUUID();
         var start = LocalDateTime.of(2026,1,1,10,0);
         var end = LocalDateTime.of(2026,1,1,11,0);
-        var result = timeSlotsRepository.makeBreaksInPeriod(personId, start, end);
+        var result = timeSlotsRepository.makeBricksInPeriod(personId, start, end);
         assertNotNull(result);
         assertEquals(4, result.size());
     }
@@ -27,7 +27,7 @@ public class TimeSlotsRepositoryTest {
         var personId = UUID.randomUUID();
         var start = LocalDateTime.of(2026,1,1,10,5);
         var end = LocalDateTime.of(2026,1,1,11,0);
-        var result = timeSlotsRepository.makeBreaksInPeriod(personId, start, end);
+        var result = timeSlotsRepository.makeBricksInPeriod(personId, start, end);
         assertNotNull(result);
         assertEquals(3, result.size());
     }
