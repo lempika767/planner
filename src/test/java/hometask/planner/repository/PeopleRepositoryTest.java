@@ -14,7 +14,7 @@ public class PeopleRepositoryTest {
     @Test
     void addPerson(){
         var name = "Ali";
-        var person = peopleRepository.getOrAddPerson(name);
+        var person = peopleRepository.getOrAddPerson(name).block();
         assertNotNull(person);
         assertEquals(name, person.name());
         assertNotNull(person.personId());
@@ -23,10 +23,10 @@ public class PeopleRepositoryTest {
     @Test
     void removePerson_personExists(){
         var name = "Ali";
-        var person = peopleRepository.getOrAddPerson(name);
-        var result = peopleRepository.removePerson(name);
+        var person = peopleRepository.getOrAddPerson(name).block();
+        var result = peopleRepository.removePerson(name).block();
         assertTrue(result);
-        var person1 = peopleRepository.getOrAddPerson(name);
+        var person1 = peopleRepository.getOrAddPerson(name).block();
         assertNotEquals(person.personId(), person1.personId());
     }
 
@@ -34,8 +34,8 @@ public class PeopleRepositoryTest {
     void removePerson_personNotExists(){
         var name = "Ali";
         var name1 = "Anna";
-        peopleRepository.getOrAddPerson(name);
-        var result = peopleRepository.removePerson(name1);
+        peopleRepository.getOrAddPerson(name).block();
+        var result = peopleRepository.removePerson(name1).block();
         assertFalse(result);
     }
 

@@ -3,6 +3,8 @@
 A service that enables users to manage their time slots, schedule meetings,
 and view their calendar availability.
 
+I choose Spring WebFlux because it's a better solution for big load of small requests. 
+
 ## Features
 
 - **Time Slot Management** — create available time slots with configurable duration,

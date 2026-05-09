@@ -13,279 +13,212 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.locks.Lock;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class OperationalServiceTest {
 
-    @Mock
-    private MeetingRepository meetingRepository;
-    @Mock
-    private PeopleRepository peopleRepository;
-    @Mock
-    private TimeSlotsRepository timeSlotsRepository;
+    @Mock private MeetingRepository meetingRepository;
+    @Mock private PeopleRepository peopleRepository;
+    @Mock private TimeSlotsRepository timeSlotsRepository;
 
     @InjectMocks
     private OperationalService operationalService;
 
-    private static final UUID PERSON_ID_1 = UUID.randomUUID();
-    private static final UUID PERSON_ID_2 = UUID.randomUUID();
-    private static final LocalDateTime START = LocalDateTime.of(2026, 5, 7, 10, 0);
-    private static final LocalDateTime END = LocalDateTime.of(2026, 5, 7, 11, 0);
+    private static final LocalDateTime START = LocalDateTime.of(2025, 6, 1, 10, 0);
+    private static final LocalDateTime END   = LocalDateTime.of(2025, 6, 1, 11, 0);
 
-    private Person person1;
-    private Person person2;
+    private Person alice;
+    private Person bob;
+    private UUID meetingId;
 
     @BeforeEach
     void setUp() {
-        person1 = new Person(PERSON_ID_1, "Alice");
-        person2 = new Person(PERSON_ID_2, "Bob");
+        alice     = new Person(UUID.randomUUID(), "Alice");
+        bob       = new Person(UUID.randomUUID(), "Bob");
+        meetingId = UUID.randomUUID();
     }
 
-    // --- createMeeting ---
+    // -------------------------------------------------------------------------
+    // createMeeting — happy path
+    // -------------------------------------------------------------------------
 
     @Test
-    void createMeeting_shouldReturnFalse_whenPersonNotFound() {
-        when(peopleRepository.getPeople(List.of("Alice", "Bob"))).thenReturn(List.of(person1));
+    void createMeeting_success() {
+        var slots = availableSlots(alice.personId(), START, END);
 
-        assertThrows(NoSuchElementException.class, () ->
-                operationalService.createMeeting("Meeting", List.of("Alice", "Bob"), START, END));
-    }
+        when(peopleRepository.getPeople(List.of("Alice"))).thenReturn(Flux.just(alice));
+        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn((long) slots.size());
+        when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.fromIterable(slots));
+        when(meetingRepository.addMeeting(START, END, "Standup", List.of(alice)))
+                .thenReturn(new Meeting(meetingId, START, END, "Standup", List.of(alice)));
+        when(timeSlotsRepository.reservePerson(alice.personId(), meetingId, START, END))
+                .thenReturn(Mono.just(true));
 
-    @Test
-    void createMeeting_shouldReturnTrue_whenAllPeopleAvailable() throws Exception {
-        when(peopleRepository.getPeople(List.of("Alice"))).thenReturn(List.of(person1));
-        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(4L);
-        when(timeSlotsRepository.getPersonAvailability(PERSON_ID_1)).thenReturn(
-                Set.of(
-                        new TimeSlot(START, SlotType.AVAILABLE, PERSON_ID_1, null),
-                        new TimeSlot(START.plusMinutes(15), SlotType.AVAILABLE, PERSON_ID_1, null),
-                        new TimeSlot(START.plusMinutes(30), SlotType.AVAILABLE, PERSON_ID_1, null),
-                        new TimeSlot(START.plusMinutes(45), SlotType.AVAILABLE, PERSON_ID_1, null)
-                )
-        );
-        when(meetingRepository.addMeeting(any(), any(), any(), any())).thenReturn(
-                new Meeting(UUID.randomUUID(), START, END, "MyTestMeeting", List.of(person1))
-        );
-
-        boolean result = operationalService.createMeeting("Meeting", List.of("Alice"), START, END);
-
-        assertTrue(result);
-        verify(timeSlotsRepository).removeTimeSlots(PERSON_ID_1, START, END);
+        StepVerifier.create(operationalService.createMeeting("Standup", List.of("Alice"), START, END))
+                .expectNext(true)
+                .verifyComplete();
     }
 
     @Test
-    void createMeeting_shouldThrowPersonNotAvailableException_whenPersonBusy() {
-        when(peopleRepository.getPeople(List.of("Alice"))).thenReturn(List.of(person1));
-        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(4L);
-        when(timeSlotsRepository.getPersonAvailability(PERSON_ID_1)).thenReturn(Set.of(
-                new TimeSlot(START, SlotType.AVAILABLE, PERSON_ID_1, null) // only 1 of 4 slots
-        ));
+    void createMeeting_multiplePeople_success() {
+        var aliceSlots = availableSlots(alice.personId(), START, END);
+        var bobSlots   = availableSlots(bob.personId(), START, END);
+        long bricks    = aliceSlots.size();
 
-        assertThrows(PersonNotAvailableException.class, () ->
-                operationalService.createMeeting("Meeting", List.of("Alice"), START, END));
+        when(peopleRepository.getPeople(List.of("Alice", "Bob"))).thenReturn(Flux.just(alice, bob));
+        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(bricks);
+        when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.fromIterable(aliceSlots));
+        when(timeSlotsRepository.getPersonAvailability(bob.personId())).thenReturn(Flux.fromIterable(bobSlots));
+        when(meetingRepository.addMeeting(START, END, "Sync", List.of(alice, bob)))  // "Sync" + both people
+                .thenReturn(new Meeting(meetingId, START, END, "Sync", List.of(alice, bob)));
+        when(timeSlotsRepository.reservePerson(alice.personId(), meetingId, START, END)).thenReturn(Mono.just(true));
+        when(timeSlotsRepository.reservePerson(bob.personId(),   meetingId, START, END)).thenReturn(Mono.just(true));
 
-        verify(meetingRepository, never()).addMeeting(any(), any(), any(), any());
-        verify(timeSlotsRepository, never()).removeTimeSlots(any(), any(), any());
+        StepVerifier.create(operationalService.createMeeting("Sync", List.of("Alice", "Bob"), START, END))
+                .expectNext(true)
+                .verifyComplete();
     }
 
-
-    // --- checkPeopleAvailabilityInPeriod ---
+    // -------------------------------------------------------------------------
+    // createMeeting — person not found
+    // -------------------------------------------------------------------------
 
     @Test
-    void checkPeopleAvailability_shouldPass_whenAllSlotsAvailable() {
+    void createMeeting_personNotFound_emitsError() {
+        // repository returns fewer people than requested
+        when(peopleRepository.getPeople(List.of("Alice", "Ghost"))).thenReturn(Flux.just(alice));
+
+        StepVerifier.create(operationalService.createMeeting("Standup", List.of("Alice", "Ghost"), START, END))
+                .expectError(NoSuchElementException.class)
+                .verify();
+
+        verify(meetingRepository, never()).addMeeting(any(), any(), any(), anyList());
+    }
+
+    // -------------------------------------------------------------------------
+    // createMeeting — person not available
+    // -------------------------------------------------------------------------
+
+    @Test
+    void createMeeting_personNotAvailable_emitsError() {
+        // repo returns 0 available slots but bricks > 0
+        when(peopleRepository.getPeople(List.of("Alice"))).thenReturn(Flux.just(alice));
         when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(2L);
-        when(timeSlotsRepository.getPersonAvailability(PERSON_ID_1)).thenReturn(Set.of(
-                new TimeSlot(START, SlotType.AVAILABLE, PERSON_ID_1, null),
-                new TimeSlot(START.plusMinutes(15), SlotType.AVAILABLE, PERSON_ID_1, null)
-        ));
+        when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.empty());
 
-        assertDoesNotThrow(() ->
-                operationalService.checkPeopleAvailabilityInPeriod(List.of(person1), START, END, "Meeting"));
+        StepVerifier.create(operationalService.createMeeting("Standup", List.of("Alice"), START, END))
+                .expectError(PersonNotAvailableException.class)
+                .verify();
+
+        verify(meetingRepository, never()).addMeeting(any(), any(), any(), anyList());
+    }
+
+    // -------------------------------------------------------------------------
+    // checkPeopleAvailabilityInPeriod
+    // -------------------------------------------------------------------------
+
+    @Test
+    void checkAvailability_allAvailable_completesEmpty() {
+        var slots = availableSlots(alice.personId(), START, END);
+        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn((long) slots.size());
+        when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.fromIterable(slots));
+
+        StepVerifier.create(operationalService.checkPeopleAvailabilityInPeriod(List.of(alice), START, END, "Meeting"))
+                .verifyComplete();
     }
 
     @Test
-    void checkPeopleAvailability_shouldThrow_whenNotEnoughSlots() {
+    void checkAvailability_partialSlots_emitsError() {
+        var oneSlot = List.of(new TimeSlot(START, SlotType.AVAILABLE, alice.personId(), null));
         when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(2L);
-        when(timeSlotsRepository.getPersonAvailability(PERSON_ID_1)).thenReturn(Set.of(
-                new TimeSlot(START, SlotType.AVAILABLE, PERSON_ID_1, null)
-        ));
+        when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.fromIterable(oneSlot));
 
-        assertThrows(PersonNotAvailableException.class, () ->
-                operationalService.checkPeopleAvailabilityInPeriod(List.of(person1), START, END, "Meeting"));
+        StepVerifier.create(operationalService.checkPeopleAvailabilityInPeriod(List.of(alice), START, END, "Meeting"))
+                .expectError(PersonNotAvailableException.class)
+                .verify();
     }
 
     @Test
-    void checkPeopleAvailability_shouldThrow_whenSlotOutsidePeriod() {
-        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(2L);
-        when(timeSlotsRepository.getPersonAvailability(PERSON_ID_1)).thenReturn(Set.of(
-                new TimeSlot(START, SlotType.AVAILABLE, PERSON_ID_1, null),
-                new TimeSlot(END.plusMinutes(15), SlotType.AVAILABLE, PERSON_ID_1, null) // outside range
-        ));
+    void checkAvailability_busySlotsNotCounted() {
+        // repo already filters AVAILABLE — so if all slots are BUSY, it returns empty
+        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(1L);
+        when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.empty());
 
-        assertThrows(PersonNotAvailableException.class, () ->
-                operationalService.checkPeopleAvailabilityInPeriod(List.of(person1), START, END, "Meeting"));
-    }
-
-    // --- acquireLocks ---
-
-    @Test
-    void acquireLocks_shouldAcquireLocksForAllPeople() throws InterruptedException {
-        List<Lock> locks = operationalService.acquireLocks(List.of(person1, person2));
-
-        assertEquals(2, locks.size());
-        locks.forEach(Lock::unlock); // cleanup
+        StepVerifier.create(operationalService.checkPeopleAvailabilityInPeriod(List.of(alice), START, END, "Meeting"))
+                .expectError(PersonNotAvailableException.class)
+                .verify();
     }
 
     @Test
-    void acquireLocks_shouldReturnEmptyList_whenNoPeople() throws InterruptedException {
-        List<Lock> locks = operationalService.acquireLocks(List.of());
-        assertTrue(locks.isEmpty());
+    void checkAvailability_slotsOutsideRange_notCounted() {
+        var outsideSlot = new TimeSlot(END.plusHours(1), SlotType.AVAILABLE, alice.personId(), null);
+        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(1L);
+        when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.just(outsideSlot));
+
+        StepVerifier.create(operationalService.checkPeopleAvailabilityInPeriod(List.of(alice), START, END, "Meeting"))
+                .expectError(PersonNotAvailableException.class)
+                .verify();
     }
 
-    // --- addTimeSlots ---
+    // -------------------------------------------------------------------------
+    // addTimeSlots / removeTimeSlots — delegate + lock
+    // -------------------------------------------------------------------------
 
     @Test
-    void addTimeSlots_shouldReturnTimeSlots_whenLockAcquired() {
-        Set<TimeSlot> expected = Set.of(
-                new TimeSlot(START, SlotType.AVAILABLE, PERSON_ID_1, null),
-                new TimeSlot(START.plusMinutes(15), SlotType.AVAILABLE, PERSON_ID_1, null)
-        );
-        when(timeSlotsRepository.addTimeSlots(PERSON_ID_1, START, END)).thenReturn(expected);
+    void addTimeSlots_returnsSlots() {
+        var slots = availableSlots(alice.personId(), START, END);
+        when(timeSlotsRepository.addTimeSlots(alice.personId(), START, END)).thenReturn(Flux.fromIterable(slots));
 
-        Set<TimeSlot> result = operationalService.addTimeSlots(PERSON_ID_1, START, END);
-
-        assertEquals(expected, result);
-        verify(timeSlotsRepository).addTimeSlots(PERSON_ID_1, START, END);
-    }
-
-    @Test
-    void addTimeSlots_shouldCallRepository_withCorrectArguments() {
-        when(timeSlotsRepository.addTimeSlots(PERSON_ID_1, START, END)).thenReturn(Set.of());
-
-        operationalService.addTimeSlots(PERSON_ID_1, START, END);
-
-        verify(timeSlotsRepository, times(1)).addTimeSlots(PERSON_ID_1, START, END);
-    }
-
-// --- removeTimeSlots ---
-
-    @Test
-    void removeTimeSlots_shouldReturnRemainingSlots_whenLockAcquired() {
-        Set<TimeSlot> remaining = Set.of(
-                new TimeSlot(START.plusMinutes(30), SlotType.AVAILABLE, PERSON_ID_1, null)
-        );
-        when(timeSlotsRepository.removeTimeSlots(PERSON_ID_1, START, END)).thenReturn(remaining);
-
-        Set<TimeSlot> result = operationalService.removeTimeSlots(PERSON_ID_1, START, END);
-
-        assertEquals(remaining, result);
-        verify(timeSlotsRepository).removeTimeSlots(PERSON_ID_1, START, END);
+        StepVerifier.create(operationalService.addTimeSlots(alice.personId(), START, END))
+                .expectNextSequence(slots)
+                .verifyComplete();
     }
 
     @Test
-    void removeTimeSlots_shouldReturnNull_whenAllSlotsRemoved() {
-        when(timeSlotsRepository.removeTimeSlots(PERSON_ID_1, START, END)).thenReturn(null);
+    void removeTimeSlots_returnsRemainingSlots() {
+        var remaining = availableSlots(alice.personId(), END, END.plusHours(1));
+        when(timeSlotsRepository.removeTimeSlots(alice.personId(), START, END)).thenReturn(Flux.fromIterable(remaining));
 
-        Set<TimeSlot> result = operationalService.removeTimeSlots(PERSON_ID_1, START, END);
-
-        assertNull(result);
-    }
-
-// --- reservePersonTime ---
-
-    @Test
-    void reservePersonTime_shouldReturnTrue_whenReservationSucceeds() {
-        UUID meetingId = UUID.randomUUID();
-        when(timeSlotsRepository.reservePerson(PERSON_ID_1, meetingId, START, END)).thenReturn(
-                Set.of(new TimeSlot(START, SlotType.BUSY, PERSON_ID_1, meetingId))
-        );
-
-        boolean result = operationalService.reservePersonTime(PERSON_ID_1, meetingId, START, END);
-
-        assertTrue(result);
-        verify(timeSlotsRepository).reservePerson(PERSON_ID_1, meetingId, START, END);
+        StepVerifier.create(operationalService.removeTimeSlots(alice.personId(), START, END))
+                .expectNextSequence(remaining)
+                .verifyComplete();
     }
 
     @Test
-    void reservePersonTime_shouldReturnFalse_whenPersonNotFound() {
-        UUID meetingId = UUID.randomUUID();
-        when(timeSlotsRepository.reservePerson(PERSON_ID_1, meetingId, START, END)).thenReturn(null);
+    void removeTimeSlots_noRemaining_returnsEmpty() {
+        when(timeSlotsRepository.removeTimeSlots(alice.personId(), START, END)).thenReturn(Flux.empty());
 
-        boolean result = operationalService.reservePersonTime(PERSON_ID_1, meetingId, START, END);
-
-        assertFalse(result);
+        StepVerifier.create(operationalService.removeTimeSlots(alice.personId(), START, END))
+                .verifyComplete();
     }
 
-// --- executeWithWriteLock (via addTimeSlots) - concurrency/error paths ---
+    // -------------------------------------------------------------------------
+    // helpers
+    // -------------------------------------------------------------------------
 
-    @Test
-    void addTimeSlots_shouldReleaseLock_evenWhenRepositoryThrows() {
-        when(timeSlotsRepository.addTimeSlots(PERSON_ID_1, START, END))
-                .thenThrow(new RuntimeException("db error"))
-                .thenReturn(Set.of()); // second call succeeds
-
-        assertThrows(RuntimeException.class, () ->
-                operationalService.addTimeSlots(PERSON_ID_1, START, END));
-
-        // lock should be released — subsequent call should not deadlock
-        assertDoesNotThrow(() -> operationalService.addTimeSlots(PERSON_ID_1, START, END));
-    }
-
-    @Test
-    void addTimeSlots_shouldBeCallableSequentially_withoutDeadlock() {
-        when(timeSlotsRepository.addTimeSlots(PERSON_ID_1, START, END)).thenReturn(Set.of());
-
-        assertDoesNotThrow(() -> {
-            operationalService.addTimeSlots(PERSON_ID_1, START, END);
-            operationalService.addTimeSlots(PERSON_ID_1, START, END);
-            operationalService.addTimeSlots(PERSON_ID_1, START, END);
-        });
-    }
-
-// --- createMeeting - edge cases ---
-
-    @Test
-    void createMeeting_shouldReturnTrue_whenEmptyPeopleList() throws Exception {
-        when(peopleRepository.getPeople(List.of())).thenReturn(List.of());
-        when(meetingRepository.addMeeting(any(), any(), any(), any())).thenReturn(
-                new Meeting(UUID.randomUUID(), START, END, "Meeting", List.of())
-        );
-
-        boolean result = operationalService.createMeeting("Meeting", List.of(), START, END);
-        assertTrue(result);
-    }
-
-    @Test
-    void createMeeting_shouldNotReserveTime_whenAvailabilityCheckFails() {
-        when(peopleRepository.getPeople(List.of("Alice", "Bob"))).thenReturn(List.of(person1, person2));
-        when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(4L);
-        when(timeSlotsRepository.getPersonAvailability(PERSON_ID_1)).thenReturn(Set.of(
-                new TimeSlot(START, SlotType.AVAILABLE, PERSON_ID_1, null)
-        ));
-
-        assertThrows(PersonNotAvailableException.class, () ->
-                operationalService.createMeeting("Meeting", List.of("Alice", "Bob"), START, END));
-
-        verify(meetingRepository, never()).addMeeting(any(), any(), any(), any());
-        verify(timeSlotsRepository, never()).removeTimeSlots(any(), any(), any());
+    /** Generates one AVAILABLE slot per hour-brick between start and end. */
+    private List<TimeSlot> availableSlots(UUID personId, LocalDateTime from, LocalDateTime to) {
+        var slots = new java.util.ArrayList<TimeSlot>();
+        var cursor = from;
+        while (!cursor.isAfter(to)) {
+            slots.add(new TimeSlot(cursor, SlotType.AVAILABLE, personId, null));
+            cursor = cursor.plusMinutes(30);
+        }
+        return slots;
     }
 }

@@ -37,7 +37,7 @@ public class TimeSlotsRepositoryTest {
         var personId = UUID.randomUUID();
         var start = LocalDateTime.of(2026,1,1,10,0);
         var end = LocalDateTime.of(2026,1,1,11,0);
-        var result = timeSlotsRepository.addTimeSlots(personId,start,end);
+        var result = timeSlotsRepository.addTimeSlots(personId,start,end).collectList().block();
         assertNotNull(result);
         assertEquals(4, result.size());
     }
@@ -49,7 +49,7 @@ public class TimeSlotsRepositoryTest {
         var end = LocalDateTime.of(2026,1,1,11,0);
         timeSlotsRepository.addTimeSlots(personId,start,end);
         // add same second time
-        var result = timeSlotsRepository.addTimeSlots(personId,start,end);
+        var result = timeSlotsRepository.addTimeSlots(personId,start,end).collectList().block();
         assertNotNull(result);
         assertEquals(4, result.size());
     }
@@ -63,7 +63,7 @@ public class TimeSlotsRepositoryTest {
         // add same second time
         var start1 = LocalDateTime.of(2026,1,2,10,0);
         var end1 = LocalDateTime.of(2026,1,2,11,0);
-        var result = timeSlotsRepository.addTimeSlots(personId,start1,end1);
+        var result = timeSlotsRepository.addTimeSlots(personId,start1,end1).collectList().block();
         assertNotNull(result);
         assertEquals(8, result.size());
     }
@@ -75,7 +75,7 @@ public class TimeSlotsRepositoryTest {
         var end = LocalDateTime.of(2026,1,1,11,0);
         timeSlotsRepository.addTimeSlots(personId,start,end);
         var start1 = LocalDateTime.of(2026,1,1,10,30);
-        var result = timeSlotsRepository.removeTimeSlots(personId,start1,end);
+        var result = timeSlotsRepository.removeTimeSlots(personId,start1,end).collectList().block();
         assertNotNull(result);
         assertEquals(2, result.size());
         assertTrue(result.iterator().next().startFrom().isBefore(start1));
@@ -89,10 +89,10 @@ public class TimeSlotsRepositoryTest {
         timeSlotsRepository.addTimeSlots(personId,start,end);
         var start1 = LocalDateTime.now().withMinute(0).plusHours(1);
         var end1 = LocalDateTime.now().withMinute(0).plusHours(2);
-        var result = timeSlotsRepository.addTimeSlots(personId, start1, end1);
+        var result = timeSlotsRepository.addTimeSlots(personId, start1, end1).collectList().block();
         assertEquals(8, result.size());
         timeSlotsRepository.cleanOldTimeSlots(personId);
-        result = timeSlotsRepository.getPersonAvailability(personId);
+        result = timeSlotsRepository.getPersonAvailability(personId).collectList().block();
         assertEquals(4, result.size());
     }
 
@@ -103,12 +103,12 @@ public class TimeSlotsRepositoryTest {
         var end = LocalDateTime.of(2026,1,1,11,0);
         timeSlotsRepository.addTimeSlots(personId,start,end);
         var start1 = LocalDateTime.of(2026,1,1,10,30);
-        var result = timeSlotsRepository.reservePerson(personId,UUID.randomUUID(), start1, end);
+        var result = timeSlotsRepository.reservePerson(personId,UUID.randomUUID(), start1, end).block();
         assertNotNull(result);
-        assertEquals(4, result.size());
-        result = timeSlotsRepository.getPersonAvailability(personId);
-        assertNotNull(result);
-        assertEquals(2, result.size());
+        assertTrue(result);
+        var result1 = timeSlotsRepository.getPersonAvailability(personId).collectList().block();
+        assertNotNull(result1);
+        assertEquals(2, result1.size());
     }
 
     @Test
@@ -123,7 +123,7 @@ public class TimeSlotsRepositoryTest {
         start1 = LocalDateTime.of(2026,1,1,11,30);
         end1 = LocalDateTime.of(2026,1,1,12,0);
         timeSlotsRepository.reservePerson(personId,UUID.randomUUID(), start1, end1);
-        var result = timeSlotsRepository.getPersonMeetings(personId);
+        var result = timeSlotsRepository.getPersonMeetings(personId).collectList().block();
         assertNotNull(result);
         assertEquals(2, result.size());
     }
