@@ -1,5 +1,6 @@
 package hometask.planner.service;
 
+import hometask.planner.dto.TimeSlotDto;
 import hometask.planner.entity.Meeting;
 import hometask.planner.entity.Person;
 import hometask.planner.entity.SlotType;
@@ -21,7 +22,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -64,12 +67,12 @@ class OperationalServiceTest {
         when(peopleRepository.getPeople(List.of("Alice"))).thenReturn(Flux.just(alice));
         when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn((long) slots.size());
         when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.fromIterable(slots));
-        when(meetingRepository.addMeeting(START, END, "Standup", List.of(alice)))
-                .thenReturn(new Meeting(meetingId, START, END, "Standup", List.of(alice)));
+        when(meetingRepository.addMeeting(START, END, "Standup", "Description", List.of(alice)))
+                .thenReturn(new Meeting(meetingId, START, END, "Standup", "Description", List.of(alice)));
         when(timeSlotsRepository.reservePerson(alice.personId(), meetingId, START, END))
                 .thenReturn(Mono.just(true));
 
-        StepVerifier.create(operationalService.createMeeting("Standup", List.of("Alice"), START, END))
+        StepVerifier.create(operationalService.createMeeting("Standup", "Description", List.of("Alice"), START, END))
                 .expectNext(true)
                 .verifyComplete();
     }
@@ -84,12 +87,12 @@ class OperationalServiceTest {
         when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(bricks);
         when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.fromIterable(aliceSlots));
         when(timeSlotsRepository.getPersonAvailability(bob.personId())).thenReturn(Flux.fromIterable(bobSlots));
-        when(meetingRepository.addMeeting(START, END, "Sync", List.of(alice, bob)))  // "Sync" + both people
-                .thenReturn(new Meeting(meetingId, START, END, "Sync", List.of(alice, bob)));
+        when(meetingRepository.addMeeting(START, END, "Sync", "Description", List.of(alice, bob)))  // "Sync" + both people
+                .thenReturn(new Meeting(meetingId, START, END, "Sync", "Description", List.of(alice, bob)));
         when(timeSlotsRepository.reservePerson(alice.personId(), meetingId, START, END)).thenReturn(Mono.just(true));
         when(timeSlotsRepository.reservePerson(bob.personId(),   meetingId, START, END)).thenReturn(Mono.just(true));
 
-        StepVerifier.create(operationalService.createMeeting("Sync", List.of("Alice", "Bob"), START, END))
+        StepVerifier.create(operationalService.createMeeting("Sync", "Description", List.of("Alice", "Bob"), START, END))
                 .expectNext(true)
                 .verifyComplete();
     }
@@ -103,11 +106,11 @@ class OperationalServiceTest {
         // repository returns fewer people than requested
         when(peopleRepository.getPeople(List.of("Alice", "Ghost"))).thenReturn(Flux.just(alice));
 
-        StepVerifier.create(operationalService.createMeeting("Standup", List.of("Alice", "Ghost"), START, END))
+        StepVerifier.create(operationalService.createMeeting("Standup", "Description", List.of("Alice", "Ghost"), START, END))
                 .expectError(NoSuchElementException.class)
                 .verify();
 
-        verify(meetingRepository, never()).addMeeting(any(), any(), any(), anyList());
+        verify(meetingRepository, never()).addMeeting(any(), any(), any(), any(), anyList());
     }
 
     // -------------------------------------------------------------------------
@@ -121,11 +124,11 @@ class OperationalServiceTest {
         when(timeSlotsRepository.calculateBricksInPeriod(START, END)).thenReturn(2L);
         when(timeSlotsRepository.getPersonAvailability(alice.personId())).thenReturn(Flux.empty());
 
-        StepVerifier.create(operationalService.createMeeting("Standup", List.of("Alice"), START, END))
+        StepVerifier.create(operationalService.createMeeting("Standup", "Description", List.of("Alice"), START, END))
                 .expectError(PersonNotAvailableException.class)
                 .verify();
 
-        verify(meetingRepository, never()).addMeeting(any(), any(), any(), anyList());
+        verify(meetingRepository, never()).addMeeting(any(), any(), any(), any(), anyList());
     }
 
     // -------------------------------------------------------------------------
@@ -185,17 +188,26 @@ class OperationalServiceTest {
         when(timeSlotsRepository.addTimeSlots(alice.personId(), START, END)).thenReturn(Flux.fromIterable(slots));
 
         StepVerifier.create(operationalService.addTimeSlots(alice.personId(), START, END))
-                .expectNextSequence(slots)
+                .expectNextSequence(slots.stream()
+                        .map(TimeSlotDto::from)
+                        .collect(Collectors.toSet()))
                 .verifyComplete();
     }
 
     @Test
     void removeTimeSlots_returnsRemainingSlots() {
         var remaining = availableSlots(alice.personId(), END, END.plusHours(1));
-        when(timeSlotsRepository.removeTimeSlots(alice.personId(), START, END)).thenReturn(Flux.fromIterable(remaining));
+        when(timeSlotsRepository.removeTimeSlots(alice.personId(), START, END))
+                .thenReturn(Flux.fromIterable(remaining));
 
-        StepVerifier.create(operationalService.removeTimeSlots(alice.personId(), START, END))
-                .expectNextSequence(remaining)
+        var expectedDtos = remaining.stream().map(TimeSlotDto::from).toList();
+
+        operationalService.removeTimeSlots(alice.personId(), START, END)
+                .collectList()
+                .as(StepVerifier::create)
+                .assertNext(actual ->
+                        assertThat(actual).containsExactlyInAnyOrderElementsOf(expectedDtos)
+                )
                 .verifyComplete();
     }
 
