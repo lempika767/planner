@@ -16,8 +16,8 @@ public class MeetingRepository {
 
     private final ConcurrentHashMap<UUID, Meeting> meetingData = new ConcurrentHashMap<>();
 
-    public Meeting addMeeting(LocalDateTime timeStart, LocalDateTime timeEnd, String meetingName, List<Person> people) {
-        Meeting meeting = new Meeting(UUID.randomUUID(), timeStart, timeEnd, meetingName, people);
+    public Meeting addMeeting(LocalDateTime timeStart, LocalDateTime timeEnd, String title, String description, List<Person> people) {
+        Meeting meeting = new Meeting(UUID.randomUUID(), timeStart, timeEnd, title, description, people);
         meetingData.put(meeting.meetingId(), meeting);
         return meeting;
     }

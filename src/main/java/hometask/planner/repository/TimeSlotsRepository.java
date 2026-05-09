@@ -4,11 +4,12 @@ import hometask.planner.entity.SlotType;
 import hometask.planner.entity.TimeSlot;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -27,49 +28,52 @@ public class TimeSlotsRepository {
         this.timeSlotDuration = timeSlotDuration;
     }
 
-    public Set<TimeSlot> getPersonAvailability(UUID personId){
-        return personTimeSlots.computeIfAbsent(personId, (key) -> HashSet.newHashSet(0))
-                .parallelStream()
-                .filter( ts -> SlotType.AVAILABLE.equals(ts.slotType()))
-                .collect(Collectors.toSet());
+    public Flux<TimeSlot> getPersonAvailability(UUID personId){
+        var slots = personTimeSlots.get(personId);
+        if (slots == null) return Flux.empty();
+        return Flux.fromStream(slots.parallelStream()
+                .filter(ts -> SlotType.AVAILABLE.equals(ts.slotType())));
     }
 
-    public List<UUID> getPersonMeetings(UUID personId){
-        return personTimeSlots.computeIfAbsent(personId, (key) -> HashSet.newHashSet(0))
-                .parallelStream()
-                .filter( ts -> SlotType.BUSY.equals(ts.slotType()))
+    public Flux<UUID> getPersonMeetings(UUID personId) {
+        var slots = personTimeSlots.get(personId);
+        if (slots == null) return Flux.empty();
+        return Flux.fromStream(slots.parallelStream()
+                .filter(ts -> SlotType.BUSY.equals(ts.slotType()))
                 .map(TimeSlot::meetingId)
-                .distinct()
-                .toList();
+                .distinct());
     }
 
-    public Set<TimeSlot> reservePerson(UUID personId, UUID meetingId, LocalDateTime start, LocalDateTime end){
-        return personTimeSlots.computeIfPresent(personId, (key, slots) ->
+    public Mono<Boolean> reservePerson(UUID personId, UUID meetingId, LocalDateTime start, LocalDateTime end){
+         var updated = personTimeSlots.computeIfPresent(personId, (key, slots) ->
              slots.parallelStream()
                     .map( ts ->{
                         if (!ts.startFrom().isBefore(start) && !ts.startFrom().isAfter(end)){
                             return  new TimeSlot(ts.startFrom(), SlotType.BUSY, personId, meetingId);
                         } return ts;
                     })
-                    .collect(Collectors.toCollection(HashSet::new))
-        );
+                    .collect(Collectors.toCollection(HashSet::new)));
+         return Mono.just(updated != null);
+
     }
 
-    public Set<TimeSlot> addTimeSlots(UUID personId, LocalDateTime start, LocalDateTime end){
+    public Flux<TimeSlot> addTimeSlots(UUID personId, LocalDateTime start, LocalDateTime end){
         var newTimeSlots = makeBricksInPeriod(personId, start,end);
-        return personTimeSlots.compute(personId, (key, slots) -> {
+        var personSlots =  personTimeSlots.compute(personId, (key, slots) -> {
             if (slots == null) slots = new HashSet<>();
             slots.addAll(newTimeSlots); // no need to removeAll first, it's a Set
             return slots;
         });
+        return Flux.fromIterable(personSlots);
     }
 
-    public Set<TimeSlot> removeTimeSlots(UUID personId, LocalDateTime start, LocalDateTime end){
-        var timeSlotsToRemove = makeBricksInPeriod(personId, start,end);
-        return  personTimeSlots.computeIfPresent(personId , (key, slots) -> {
+    public Flux<TimeSlot> removeTimeSlots(UUID personId, LocalDateTime start, LocalDateTime end) {
+        var timeSlotsToRemove = makeBricksInPeriod(personId, start, end);
+        var remaining = personTimeSlots.computeIfPresent(personId, (key, slots) -> {
             slots.removeAll(timeSlotsToRemove);
             return slots.isEmpty() ? null : slots;
         });
+        return remaining == null ? Flux.empty() : Flux.fromIterable(remaining);
     }
 
     Set<TimeSlot> makeBricksInPeriod(UUID personId, LocalDateTime start, LocalDateTime end){
